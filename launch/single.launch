@@ -1,0 +1,29 @@
+<launch>
+
+  <arg name="use_multicast" default="true"/>
+  <arg name="client_address" default="127.0.0.1"/>
+  <arg name="server_address" default="127.0.0.1"/>
+  <arg name="timeout" default="5.0"/>
+  <arg name="frame_id" default="world"/>
+  <arg name="publish_tf" default="true"/>
+  <arg name="child_frame_id" default="base_link"/>
+  <arg name="root_frame_id" default="odom"/>
+  <arg name="topic" default="/optitrack/*"/>
+  <arg name="name"/>
+
+  <node namespace="$(var name)" pkg="optitrack_ros_py" exec="optitrack_ros" name="optitrack_ros" output="screen">
+    <param name="use_multicast" value="$(var use_multicast)"/>
+    <param name="client_address" value="$(var client_address)"/>
+    <param name="server_address" value="$(var server_address)"/>
+    <param name="timeout" value="$(var timeout)"/>
+    <param name="rigid_bodies">
+      <param name="default.enabled" value="false"/>
+      <param name="$(var name).enabled" value="true"/>
+      <param name="$(var name).topic" value="$(var topic)"/>
+      <param name="$(var name).frame_id" value="$(var name)/$(var child_frame_id)"/>
+      <param name="$(var name).root_frame_id" value="$(var name)/$(var root_frame_id)"/>
+      <param name="$(var name).tf" value="$(var publish_tf)"/>
+    </param>
+  </node>
+
+</launch>
