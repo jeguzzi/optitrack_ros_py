@@ -72,7 +72,7 @@ class TF:
                 to_frame,
                 from_frame,
                 at,
-                timeout=rclpy.duration.Duration(nanoseconds=timeout * 1e9))
+                timeout=rclpy.duration.Duration(nanoseconds=timeout * 1e9))  # type: ignore
             return transform_from_msg(transform_msg.transform)
         except (tf2_ros.LookupException, tf2_ros.ConnectivityException,
                 tf2_ros.ExtrapolationException):
