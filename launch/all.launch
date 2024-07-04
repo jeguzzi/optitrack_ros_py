@@ -1,6 +1,6 @@
 <launch>
 
-  <arg name="iface"/>
+  <arg name="iface" default=""/>
   <arg name="timeout" default="5.0"/>
   <arg name="frame_id" default="world"/>
   <arg name="publish_tf" default="true"/>
@@ -12,6 +12,7 @@
   <arg name="publish_data" default="false"/>
   <arg name="publish_description" default="false"/>
   <arg name="topic" default="/optitrack/NAME"/>
+  <arg name="project_to_2d" default="false"/>
 
   <node pkg="optitrack_ros_py" exec="optitrack_ros" name="optitrack_ros" output="screen">
     <param name="iface" value="$(var iface)"/>
@@ -28,6 +29,7 @@
         <param name="frame_id" value="$(var child_frame_id)"/>
         <param name="root_frame_id" value="$(var root_frame_id)"/>
         <param name="tf" value="$(var publish_tf)"/>
+        <param name="project_to_2d" value="$(var project_to_2d)"/>
       </param>
     </param>
   </node>

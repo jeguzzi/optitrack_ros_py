@@ -11,12 +11,13 @@ except ModuleNotFoundError:
 import geometry_msgs
 import netifaces
 import optitrack_msgs.msg
+import PyKDL
 import rclpy
 import rclpy.node
 import rclpy.publisher
 import rclpy.time
 from natnet_py.client import NatNetClient
-from natnet_py.protocol import FrameSuffixData, MoCapData
+from natnet_py.protocol import FrameSuffixData, MoCapData, RigidBody
 
 from optitrack_ros_py.tf import TF
 
@@ -48,14 +49,23 @@ class NatNetROSNode(rclpy.node.Node):
 
         iface = self.try_to_declare_parameter("iface", "")
         if iface:
-            addrs = netifaces.ifaddresses(iface)
+            try:
+                addrs = netifaces.ifaddresses(iface)
+            except ValueError:
+                addrs = {}
             if addrs:
-                net = addrs[netifaces.AF_INET][0]
-                client_address = net["addr"]
-                if "broadcast" in net:
-                    broadcast_address = net["broadcast"]
+                if netifaces.AF_INET not in addrs or not addrs[
+                        netifaces.AF_INET]:
+                    self.get_logger().error(f"Interface {iface} not connected")
                 else:
-                    server_address = client_address
+                    net = addrs[netifaces.AF_INET][0]
+                    client_address = net["addr"]
+                    if "broadcast" in net:
+                        broadcast_address = net["broadcast"]
+                    else:
+                        server_address = client_address
+            else:
+                self.get_logger().error(f"Unknown interface {iface}")
 
         client_address = self.try_to_declare_parameter("client_address",
                                                        client_address)
@@ -78,12 +88,15 @@ class NatNetROSNode(rclpy.node.Node):
             "rigid_bodies.default.root_frame_id", PLACE_HOLDER)
         self._default_frame_id = self.try_to_declare_parameter(
             "rigid_bodies.default.frame_id", PLACE_HOLDER)
+        self._default_2d = self.try_to_declare_parameter(
+            "rigid_bodies.default.project_to_2d", False)
 
         self._rigid_bodies_topic: Dict[str, str] = {}
         self._rigid_bodies_enabled: Dict[str, bool] = {}
         self._rigid_bodies_tf: Dict[str, bool] = {}
         self._rigid_bodies_frame_id: Dict[str, str] = {}
         self._rigid_bodies_root_frame_id: Dict[str, str] = {}
+        self._rigid_bodies_2d: Dict[str, bool] = {}
         self._rigid_bodies_pub: Dict[int,
                                      Optional[rclpy.publisher.Publisher]] = {}
         self._rigid_bodies = set()
@@ -104,6 +117,8 @@ class NatNetROSNode(rclpy.node.Node):
                     self._rigid_bodies_root_frame_id[ns[1]] = value
                 elif ns[2] == "frame_id":
                     self._rigid_bodies_frame_id[ns[1]] = value
+                elif ns[2] == "project_to_2d":
+                    self._rigid_bodies_2d[ns[1]] = value
                 self._rigid_bodies.add(ns[1])
 
         self.client = NatNetClient(
@@ -159,6 +174,9 @@ class NatNetROSNode(rclpy.node.Node):
 
     def should_publish_tf(self, name: str) -> bool:
         return self._rigid_bodies_tf.get(name, self._default_tf)
+
+    def should_project_to_2d(self, name: str) -> bool:
+        return self._rigid_bodies_2d.get(name, self._default_2d)
 
     def get_topic(self, name: str) -> str:
         value = self._rigid_bodies_topic.get(name, self._default_topic)
@@ -238,11 +256,32 @@ class NatNetROSNode(rclpy.node.Node):
                 self._rigid_bodies_pub[uid] = None
         return self._rigid_bodies_pub.get(uid, None)
 
+    def pose_msg(self, rb: RigidBody) -> geometry_msgs.msg.Pose:
+        msg = geometry_msgs.msg.Pose()
+        msg.position.x = rb.position[0]
+        msg.position.y = -rb.position[2]
+        q = (rb.orientation[0], -rb.orientation[2], rb.orientation[1],
+             rb.orientation[3])
+        name = self.client.rigid_body_names.get(rb.id_num, "")
+        if self.should_project_to_2d(name):
+            msg.position.z = 0
+            y, p, r = PyKDL.Rotation.Quaternion(*q).GetEulerZYX()
+            q = PyKDL.Rotation.EulerZYX(y, 0, 0).GetQuaternion()
+        else:
+            msg.position.z = rb.position[1]
+        msg.orientation.x = q[0]
+        msg.orientation.y = q[1]
+        msg.orientation.z = q[2]
+        msg.orientation.w = q[3]
+        return msg
+
     def data_callback(self, data: MoCapData) -> None:
         self.last_data_stamp = self.stamp(data.suffix_data)
         stamp = self.last_data_stamp.to_msg()
         self.last_data = data
         for rb in data.rigid_bodies:
+            if not rb.tracking_valid:
+                continue
             pub = self.get_publisher(rb.id_num)
             frames = self.get_tf_frames(rb.id_num)
             # self.get_logger().info(f"rb {rb} {pub} {frames}" )
@@ -250,13 +289,7 @@ class NatNetROSNode(rclpy.node.Node):
                 msg = geometry_msgs.msg.PoseStamped()
                 msg.header.frame_id = self.frame_id
                 msg.header.stamp = stamp
-                msg.pose.position.x = rb.position[0]
-                msg.pose.position.y = -rb.position[2]
-                msg.pose.position.z = rb.position[1]
-                msg.pose.orientation.x = rb.orientation[0]
-                msg.pose.orientation.y = -rb.orientation[2]
-                msg.pose.orientation.z = rb.orientation[1]
-                msg.pose.orientation.w = rb.orientation[3]
+                msg.pose = self.pose_msg(rb)
             if pub:
                 pub.publish(msg)
             if frames is not None:
