@@ -6,7 +6,12 @@ import PyKDL
 import rclpy.duration
 import rclpy.node
 import tf2_ros
-from geometry_msgs.msg import Pose, PoseStamped, TransformStamped
+from geometry_msgs.msg import (Point, Pose, PoseStamped, TransformStamped,
+                               Vector3)
+
+
+def vector_msg(point: Point) -> Vector3:
+    return Vector3(x=point.x, y=point.y, z=point.z)
 
 
 def transform_from_msg(msg: TransformStamped) -> PyKDL.Frame:
@@ -23,7 +28,7 @@ def transform_msg_from_pose_msg(pose_msg: PoseStamped,
     msg = TransformStamped()
     msg.header = pose_msg.header
     msg.child_frame_id = target_link
-    msg.transform.translation = pose_msg.pose.position
+    msg.transform.translation = vector_msg(pose_msg.pose.position)
     msg.transform.rotation = pose_msg.pose.orientation
     return msg
 
@@ -115,6 +120,6 @@ class TF:
         msg.header.frame_id = root_link
         msg.header.stamp = self.clock.now().to_msg()
         msg.child_frame_id = target_link
-        msg.transform.translation = pose.position
+        msg.transform.translation = vector_msg(pose.position)
         msg.transform.rotation = pose.orientation
         self.static_broadcaster.sendTransform(msg)
