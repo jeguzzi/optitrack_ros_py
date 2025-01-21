@@ -1,4 +1,4 @@
-from typing import Union
+from __future__ import annotations
 
 import geometry_msgs.msg
 import optitrack_msgs.msg
@@ -9,8 +9,12 @@ def msg_from_vector(value: protocol.Vector3) -> geometry_msgs.msg.Vector3:
     return geometry_msgs.msg.Vector3(x=value[0], y=value[1], z=value[2])
 
 
-def msg_from_quaternion(value: protocol.Quaternion) -> geometry_msgs.msg.Quaternion:
-    return geometry_msgs.msg.Quaternion(x=value[0], y=value[1], z=value[2], w=value[3])
+def msg_from_quaternion(
+        value: protocol.Quaternion) -> geometry_msgs.msg.Quaternion:
+    return geometry_msgs.msg.Quaternion(x=value[0],
+                                        y=value[1],
+                                        z=value[2],
+                                        w=value[3])
 
 
 def msg_from_camera_description(
@@ -28,7 +32,7 @@ def msg_from_device_description(
 ) -> optitrack_msgs.msg.DeviceDescription:
     msg = optitrack_msgs.msg.DeviceDescription()
     msg.name = value.name
-    msg.id = value.id_num
+    msg.id = value.id
     msg.serial_number = value.serial_number
     msg.type = value.device_type
     msg.data_type = value.channel_data_type
@@ -40,7 +44,7 @@ def msg_from_force_plate_description(
     value: protocol.ForcePlateDescription,
 ) -> optitrack_msgs.msg.ForcePlateDescription:
     msg = optitrack_msgs.msg.ForcePlateDescription()
-    msg.id = value.id_num
+    msg.id = value.id
     msg.serial_number = value.serial_number
     msg.width = value.width
     msg.length = value.length
@@ -48,8 +52,8 @@ def msg_from_force_plate_description(
     msg.position = msg_from_vector(value.position)
     msg.data_type = value.channel_data_type
     msg.channels = value.channels
-    msg.cal_matrix = value.cal_matrix.flatten()
-    msg.corners = value.corners.flatten()
+    msg.cal_matrix = value.cal_matrix
+    msg.corners = value.corners
     return msg
 
 
@@ -67,7 +71,7 @@ def msg_from_skeleton_description(
 ) -> optitrack_msgs.msg.SkeletonDescription:
     msg = optitrack_msgs.msg.SkeletonDescription()
     msg.name = value.name
-    msg.id = value.new_id
+    msg.id = value.id
     msg.rigid_bodies = [
         msg_from_rigid_body_description(item) for item in value.rigid_bodies
     ]
@@ -79,10 +83,10 @@ def msg_from_rigid_body_description(
 ) -> optitrack_msgs.msg.RigidBodyDescription:
     msg = optitrack_msgs.msg.RigidBodyDescription()
     msg.name = value.name
-    msg.id = value.new_id
+    msg.id = value.id
     msg.parent_id = value.parent_id
     msg.position = msg_from_vector(value.position)
-    msg.markers = [msg_from_marker_description(m) for m in value.rb_markers]
+    msg.markers = [msg_from_marker_description(m) for m in value.markers]
     return msg
 
 
@@ -97,8 +101,7 @@ def msg_from_marker_description(
 
 
 def msg_from_description(
-    value: protocol.DataDescriptions,
-) -> optitrack_msgs.msg.Description:
+    value: protocol.MoCapDescription, ) -> optitrack_msgs.msg.Description:
     msg = optitrack_msgs.msg.Description()
     msg.marker_sets = [
         msg_from_marker_set_description(item) for item in value.marker_sets
@@ -106,7 +109,9 @@ def msg_from_description(
     msg.rigid_bodies = [
         msg_from_rigid_body_description(item) for item in value.rigid_bodies
     ]
-    msg.skeletons = [msg_from_skeleton_description(item) for item in value.skeletons]
+    msg.skeletons = [
+        msg_from_skeleton_description(item) for item in value.skeletons
+    ]
     msg.force_plates = [
         msg_from_force_plate_description(item) for item in value.force_plates
     ]
@@ -115,48 +120,52 @@ def msg_from_description(
     return msg
 
 
-def msg_from_rigid_body(value: protocol.RigidBody) -> optitrack_msgs.msg.RigidBody:
+def msg_from_rigid_body(
+        value: protocol.RigidBodyData) -> optitrack_msgs.msg.RigidBody:
     msg = optitrack_msgs.msg.RigidBody()
-    msg.id = value.id_num
+    msg.id = value.id
     msg.position = msg_from_vector(value.position)
     msg.orientation = msg_from_quaternion(value.orientation)
-    msg.markers = [msg_from_marker(m) for m in value.rb_marker_list]
+    msg.markers = [msg_from_marker(m) for m in value.markers]
     msg.tracking = value.tracking_valid
     msg.error = value.error
     return msg
 
 
 def msg_from_marker(
-    value: protocol.RigidBodyMarker,
+    value: protocol.RigidBodyMarkerData,
 ) -> optitrack_msgs.msg.RigidBodyMarker:
     msg = optitrack_msgs.msg.RigidBodyMarker()
     msg.position = msg_from_vector(value.position)
-    msg.id = value.id_num
+    msg.id = value.id
     msg.size = value.size
     msg.error = value.error
     return msg
 
 
-def msg_from_marker_set(value: protocol.MarkerSet) -> optitrack_msgs.msg.MarkerSet:
+def msg_from_marker_set(
+        value: protocol.MarkerSetData) -> optitrack_msgs.msg.MarkerSet:
     msg = optitrack_msgs.msg.MarkerSet()
-    msg.name = value.model_name
-    msg.positions = [msg_from_vector(p) for p in value.marker_positions]
+    msg.name = value.name
+    msg.positions = [msg_from_vector(p) for p in value.positions]
     return msg
 
 
-def msg_from_skeleton(value: protocol.Skeleton) -> optitrack_msgs.msg.Skeleton:
+def msg_from_skeleton(
+        value: protocol.SkeletonData) -> optitrack_msgs.msg.Skeleton:
     msg = optitrack_msgs.msg.Skeleton()
-    msg.id = value.id_num
-    msg.rigid_bodies = [msg_from_rigid_body(item) for item in value.rigid_bodies]
+    msg.id = value.id
+    msg.rigid_bodies = [
+        msg_from_rigid_body(item) for item in value.rigid_bodies
+    ]
     return msg
 
 
 def msg_from_labeled_marker(
-    value: protocol.LabeledMarker,
-) -> optitrack_msgs.msg.LabeledMarker:
+        value: protocol.LabeledMarkerData) -> optitrack_msgs.msg.LabeledMarker:
     msg = optitrack_msgs.msg.LabeledMarker()
     msg.position = msg_from_vector(value.position)
-    msg.id = value.id_num
+    msg.id = value.id
     msg.size = value.size
     msg.error = value.residual
     msg.param = value.param
@@ -164,27 +173,30 @@ def msg_from_labeled_marker(
 
 
 def msg_from_device(
-    value: Union[protocol.Device, protocol.ForcePlate]
+    value: protocol.DeviceData | protocol.ForcePlateData
 ) -> optitrack_msgs.msg.Device:
     msg = optitrack_msgs.msg.Device()
-    msg.id = value.id_num
-    msg.channels = [msg_from_channel(item) for item in value.channel_data]
+    msg.id = value.id
+    msg.channels = [msg_from_channel(item) for item in value.channels]
     return msg
 
 
 def msg_from_channel(
-    value: Union[protocol.DeviceChannelData, protocol.ForcePlateChannelData]
-) -> optitrack_msgs.msg.Channel:
+        value: protocol.AnalogChannelData) -> optitrack_msgs.msg.Channel:
     msg = optitrack_msgs.msg.Channel()
-    msg.data = value.frame_list
+    msg.data = value.values
     return msg
 
 
 def msg_from_data(value: protocol.MoCapData) -> optitrack_msgs.msg.Data:
     msg = optitrack_msgs.msg.Data()
     msg.marker_sets = [msg_from_marker_set(item) for item in value.marker_sets]
-    msg.unlabeled_markers = msg_from_marker_set(value.unlabeled_markers)
-    msg.rigid_bodies = [msg_from_rigid_body(item) for item in value.rigid_bodies]
+    msg.unlabeled_markers_positions = [
+        msg_from_vector(p) for p in value.unlabeled_markers_positions
+    ]
+    msg.rigid_bodies = [
+        msg_from_rigid_body(item) for item in value.rigid_bodies
+    ]
     msg.skeletons = [msg_from_skeleton(item) for item in value.skeletons]
     msg.labeled_markers = [
         msg_from_labeled_marker(item) for item in value.labeled_markers

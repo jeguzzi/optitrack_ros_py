@@ -1,5 +1,10 @@
+from __future__ import annotations
+
 import asyncio
-from typing import Any, Dict, Optional, Tuple, TypeVar, cast
+import dataclasses as dc
+import math
+import re
+from typing import Any, TypeVar, cast
 
 try:
     import diagnostic_msgs
@@ -16,8 +21,10 @@ import rclpy
 import rclpy.node
 import rclpy.publisher
 import rclpy.time
-from natnet_py.client import NatNetClient
-from natnet_py.protocol import FrameSuffixData, MoCapData, RigidBody
+from natnet_py import AsyncClient
+from natnet_py.protocol import FrameSuffixData, MoCapData, RigidBodyData
+from rclpy.validate_topic_name import (InvalidTopicNameException,
+                                       validate_topic_name)
 
 from optitrack_ros_py.tf import TF
 
@@ -25,10 +32,69 @@ from .interfaces import msg_from_data, msg_from_description
 
 T = TypeVar("T")
 
-PLACE_HOLDER = 'NAME'
+
+@dc.dataclass
+class RigidBodyConfig:
+    enabled: bool = False
+    name: str = ''
+    tf: bool = False
+    topic: str = ''
+    frame_id: str = ''
+    root_frame_id: str = ''
+    project_to_2d: bool = False
+
+    def replace_name(self, name: str, place_holder: str) -> None:
+        self.name = self.name.replace(place_holder, name)
+        self.topic = self.topic.replace(place_holder, self.name)
+        self.frame_id = self.frame_id.replace(place_holder, self.name)
+        self.root_frame_id = self.root_frame_id.replace(
+            place_holder, self.name)
+
+
+@dc.dataclass
+class OptionalRigidBodyConfig:
+    enabled: bool | None = None
+    name: str | None = None
+    tf: bool | None = None
+    topic: str | None = None
+    frame_id: str | None = None
+    root_frame_id: str | None = None
+    project_to_2d: bool | None = None
+
+    def or_default(self, default: RigidBodyConfig) -> RigidBodyConfig:
+        values = dc.asdict(self)
+        default_values = dc.asdict(default)
+        return RigidBodyConfig(
+            **{
+                k: v if v is not None else default_values[k]
+                for k, v in values.items()
+            })
+
+
+@dc.dataclass
+class RigidBody:
+    config: RigidBodyConfig
+    publisher: rclpy.publisher.Publisher | None = None
+    last_pose_msg: geometry_msgs.msg.PoseStamped | None = None
+
+    @property
+    def tf_frames(self) -> tuple[str, str] | None:
+        if self.config.tf and self.config.frame_id and self.config.root_frame_id:
+            return (self.config.frame_id, self.config.root_frame_id)
+        return None
+
+    @property
+    def enabled(self) -> bool:
+        return self.config.enabled
+
+    @property
+    def name(self) -> str:
+        return self.config.name
 
 
 class NatNetROSNode(rclpy.node.Node):
+
+    PLACE_HOLDER = 'NAME'
 
     def try_to_declare_parameter(self, name: str, value: T) -> T:
         if not self.has_parameter(name):
@@ -42,9 +108,10 @@ class NatNetROSNode(rclpy.node.Node):
             automatically_declare_parameters_from_overrides=True,
         )
         self.clock = self.get_clock()
+        self.updating_description = False
 
-        client_address = "127.0.0.1"
-        broadcast_address = ""
+        client_address = "0.0.0.0"
+        broadcast_address = "255.255.255.255"
         server_address = ""
 
         iface = self.try_to_declare_parameter("iface", "")
@@ -59,84 +126,88 @@ class NatNetROSNode(rclpy.node.Node):
                     self.get_logger().error(f"Interface {iface} not connected")
                 else:
                     net = addrs[netifaces.AF_INET][0]
+                    print(net)
                     client_address = net["addr"]
                     if "broadcast" in net:
                         broadcast_address = net["broadcast"]
                     else:
                         server_address = client_address
+                        broadcast_address = ""
             else:
                 self.get_logger().error(f"Unknown interface {iface}")
 
         client_address = self.try_to_declare_parameter("client_address",
                                                        client_address)
-        broadcast_address = self.try_to_declare_parameter(
+        self.broadcast_address = self.try_to_declare_parameter(
             "broadcast_address", broadcast_address)
-        server_address = self.try_to_declare_parameter("server_address",
-                                                       server_address)
-        use_multicast = self.try_to_declare_parameter("use_multicast", False)
+        self.server_address = self.try_to_declare_parameter(
+            "server_address", server_address)
+        # use_multicast = self.try_to_declare_parameter("use_multicast", False)
         self.sync = self.try_to_declare_parameter("sync", True)
         self.restamp = self.try_to_declare_parameter("restamp", False)
+        self.optitrack_frame_id = "optitrack"
         self.frame_id = self.try_to_declare_parameter("frame_id", "world")
         self.timeout = self.try_to_declare_parameter("timeout", 5.0)
-        self._default_topic = self.try_to_declare_parameter(
-            "rigid_bodies.default.topic", f"/optitrack/{PLACE_HOLDER}")
-        self._default_enabled = self.try_to_declare_parameter(
-            "rigid_bodies.default.enabled", True)
-        self._default_tf = self.try_to_declare_parameter(
-            "rigid_bodies.default.tf", False)
-        self._default_root_frame_id = self.try_to_declare_parameter(
-            "rigid_bodies.default.root_frame_id", PLACE_HOLDER)
-        self._default_frame_id = self.try_to_declare_parameter(
-            "rigid_bodies.default.frame_id", PLACE_HOLDER)
-        self._default_2d = self.try_to_declare_parameter(
-            "rigid_bodies.default.project_to_2d", False)
-
-        self._rigid_bodies_topic: Dict[str, str] = {}
-        self._rigid_bodies_enabled: Dict[str, bool] = {}
-        self._rigid_bodies_tf: Dict[str, bool] = {}
-        self._rigid_bodies_frame_id: Dict[str, str] = {}
-        self._rigid_bodies_root_frame_id: Dict[str, str] = {}
-        self._rigid_bodies_2d: Dict[str, bool] = {}
-        self._rigid_bodies_pub: Dict[int,
-                                     Optional[rclpy.publisher.Publisher]] = {}
-        self._rigid_bodies = set()
-        self._tf_frames: Dict[int, Tuple[str, str]] = {}
-        self._tf: Optional[TF] = None
-
+        self._tf: TF | None = None
+        pose = geometry_msgs.msg.Pose()
+        pose.orientation.x = math.sqrt(2)
+        pose.orientation.w = math.sqrt(2)
+        self.tf.broadcast_static(pose, 'optitrack', self.frame_id)
+        self._rigid_bodies: dict[int, RigidBody] = {}
+        self._default_config = RigidBodyConfig(
+            enabled=self.try_to_declare_parameter(
+                "rigid_bodies.default.enabled", True),
+            name=self.try_to_declare_parameter("rigid_bodies.default.name",
+                                               self.PLACE_HOLDER),
+            tf=self.try_to_declare_parameter("rigid_bodies.default.tf", False),
+            topic=self.try_to_declare_parameter(
+                "rigid_bodies.default.topic",
+                f"/optitrack/{self.PLACE_HOLDER}"),
+            root_frame_id=self.try_to_declare_parameter(
+                "rigid_bodies.default.root_frame_id", self.PLACE_HOLDER),
+            frame_id=self.try_to_declare_parameter(
+                "rigid_bodies.default.frame_id", self.PLACE_HOLDER),
+            project_to_2d=self.try_to_declare_parameter(
+                "rigid_bodies.default.project_to_2d", False))
+        self._config: dict[str, OptionalRigidBodyConfig] = {}
         for name in self.get_parameters_by_prefix(""):
             ns = name.split(".")
             if ns[0] == "rigid_bodies" and len(ns) == 3:
                 value = self.get_parameter(name).value
+                name = ns[1]
+                if name == "default":
+                    continue
+                if name not in self._config:
+                    self._config[name] = OptionalRigidBodyConfig()
+                config = self._config[name]
                 if ns[2] == "topic":
-                    self._rigid_bodies_topic[ns[1]] = value
+                    config.topic = value
+                elif ns[2] == "name":
+                    config.name = value
                 elif ns[2] == "enabled":
-                    self._rigid_bodies_enabled[ns[1]] = value
+                    config.enabled = value
                 elif ns[2] == "tf":
-                    self._rigid_bodies_tf[ns[1]] = value
+                    config.tf = value
                 elif ns[2] == "root_frame_id":
-                    self._rigid_bodies_root_frame_id[ns[1]] = value
+                    config.root_frame_id = value
                 elif ns[2] == "frame_id":
-                    self._rigid_bodies_frame_id[ns[1]] = value
+                    config.frame_id = value
                 elif ns[2] == "project_to_2d":
-                    self._rigid_bodies_2d[ns[1]] = value
-                self._rigid_bodies.add(ns[1])
+                    config.project_to_2d = value
 
-        self.client = NatNetClient(
-            client_address=client_address,
-            server_address=server_address,
-            broadcast_address=broadcast_address,
-            use_multicast=use_multicast,
+        self.client = AsyncClient(
+            address=client_address,
             queue=-1,
             logger=self.get_logger(),  # type: ignore
             now=self.now_ns,
             sync=self.sync,
         )
 
-        self.last_data_stamp: Optional[rclpy.time.Time] = None
-        self.last_data: Optional[MoCapData] = None
+        self.last_data_stamp: rclpy.time.Time | None = None
+        self.last_data: MoCapData | None = None
         self._diagnostics = DIAGNOSTICS and self.try_to_declare_parameter(
             "diagnostics", True)
-        self.data_freq: Optional[diagnostic_updater.FrequencyStatus] = None
+        self.data_freq: diagnostic_updater.FrequencyStatus | None = None
         self.should_publish_data = self.try_to_declare_parameter(
             "publish_data", False)
         self.should_publish_description = self.try_to_declare_parameter(
@@ -145,7 +216,7 @@ class NatNetROSNode(rclpy.node.Node):
     def now_ns(self) -> int:
         return self.get_clock().now().nanoseconds
 
-    def stamp(self, data: Optional[FrameSuffixData]) -> rclpy.time.Time:
+    def stamp(self, data: FrameSuffixData | None) -> rclpy.time.Time:
         if self.restamp or not data:
             return self.get_clock().now()
         if self.sync and self.client.clock:
@@ -158,36 +229,51 @@ class NatNetROSNode(rclpy.node.Node):
     def update_diagnostics(
         self, stat: diagnostic_updater.DiagnosticStatusWrapper
     ) -> diagnostic_updater.DiagnosticStatusWrapper:
-        if self.last_data_stamp is not None and self.last_data is not None:
+        # if self.last_data_stamp is not None and self.last_data is not None:
+        #     stat.summary(diagnostic_msgs.msg.DiagnosticStatus.OK, "Connected")
+        #     for data in self.last_data.rigid_bodies:
+        #         name = self.client.rigid_body_names.get(data.id_num, "")
+        #         stat.add(f"{data.id_num}",
+        #                  f"{name} ({data.position}, {data.orientation})")
+        if self._rigid_bodies:
             stat.summary(diagnostic_msgs.msg.DiagnosticStatus.OK, "Connected")
-            for rb in self.last_data.rigid_bodies:
-                name = self.client.rigid_body_names.get(rb.id_num, "")
-                stat.add(f"{rb.id_num}",
-                         f"{name} ({rb.position}, {rb.orientation})")
+            for uid, rb in self._rigid_bodies.items():
+                if not rb.last_pose_msg:
+                    msg = 'not yet seen'
+                else:
+                    last_time = rclpy.time.Time.from_msg(
+                        rb.last_pose_msg.header.stamp)
+                    dt = (self.get_clock().now() - last_time).nanoseconds
+                    if dt < 1e9:
+                        last_seen = 'just seen'
+                    else:
+                        last_seen = f'last seen {dt / 1e9: %d} seconds ago'
+                    x = rb.last_pose_msg.pose.position
+                    position = f'(x={x.x:.3f}, y={x.y:.3f}, z={x.z:.3f})'
+                    q = rb.last_pose_msg.pose.orientation
+                    y, p, r = PyKDL.Rotation.Quaternion(q.x, q.y, q.z,
+                                                        q.w).GetEulerZYX()
+                    orientation = (f'(yaw={math.degrees(y):.1f}, '
+                                   f'pitch={math.degrees(p):.1f}, '
+                                   f'roll={math.degrees(r):.1f})')
+                    msg = f'{last_seen} at {position}, {orientation}'
+                stat.add(f"{rb.name}", msg)
         else:
             stat.summary(diagnostic_msgs.msg.DiagnosticStatus.WARN,
                          "Not connected")
         return stat
 
-    def is_enabled(self, name: str) -> bool:
-        return self._rigid_bodies_enabled.get(name, self._default_enabled)
-
-    def should_publish_tf(self, name: str) -> bool:
-        return self._rigid_bodies_tf.get(name, self._default_tf)
-
-    def should_project_to_2d(self, name: str) -> bool:
-        return self._rigid_bodies_2d.get(name, self._default_2d)
-
-    def get_topic(self, name: str) -> str:
-        value = self._rigid_bodies_topic.get(name, self._default_topic)
-        return value.replace(PLACE_HOLDER, name)
-
-    def get_frames(self, name: str) -> Tuple[str, str]:
-        root = self._rigid_bodies_root_frame_id.get(
-            name, self._default_root_frame_id)
-        target = self._rigid_bodies_frame_id.get(name, self._default_frame_id)
-        return target.replace(PLACE_HOLDER,
-                              name), root.replace(PLACE_HOLDER, name)
+    def get_rigid_body_config(self, name: str) -> RigidBodyConfig:
+        opt_config = OptionalRigidBodyConfig()
+        for pattern, candidate in self._config.items():
+            if re.match(pattern, name):
+                opt_config = candidate
+                break
+        # opt_config = self._config.get(name, OptionalRigidBodyConfig())
+        config = opt_config.or_default(self._default_config)
+        config.replace_name(name, self.PLACE_HOLDER)
+        self.get_logger().info(f"Use {config} for {name}")
+        return config
 
     @property
     def tf(self) -> TF:
@@ -195,9 +281,35 @@ class NatNetROSNode(rclpy.node.Node):
             self._tf = TF(self)
         return self._tf
 
+    def init_rigid_body(self, uid: int, config: RigidBodyConfig) -> None:
+        rb = self._rigid_bodies[uid] = RigidBody(config)
+        if config.enabled:
+            try:
+                validate_topic_name(config.topic)
+                rb.publisher = self.create_publisher(
+                    geometry_msgs.msg.PoseStamped, config.topic, 1)
+            except InvalidTopicNameException:
+                self.get_logger().warning(f"Topic {config.topic} not valid")
+
+    async def update_description(self):
+        self.updating_description = True
+        self.get_logger().info("Updating client description")
+        await self.client.update_description()
+        self.updating_description = False
+
+    def get_rigid_body(self, uid: int) -> RigidBody | None:
+        if uid not in self._rigid_bodies:
+            name = self.client.rigid_body_names.get(uid, "")
+            if not name and not self.updating_description and self.executor:
+                self.executor.create_task(self.update_description())
+                return None
+            config = self.get_rigid_body_config(name)
+            self.init_rigid_body(uid, config)
+        return self._rigid_bodies[uid]
+
     async def init_ros(self) -> None:
         if self._diagnostics:
-            fps = await self.client.get_framerate_async()
+            fps = await self.client.get_framerate()
             self.updater = diagnostic_updater.Updater(self, period=1.0)
             self.updater.setHardwareID("Optitrack")
             self.updater.add(self.get_namespace(), self.update_diagnostics)
@@ -209,15 +321,11 @@ class NatNetROSNode(rclpy.node.Node):
             self.data_freq = diagnostic_updater.FrequencyStatus(params,
                                                                 name="Data")
             self.updater.add(self.data_freq)
-
         uids = {v: k for k, v in self.client.rigid_body_names.items()}
-        for name in self._rigid_bodies:
+        for name in self._config:
             if name in uids:
-                if self.is_enabled(name):
-                    self._rigid_bodies_pub[uids[name]] = self.create_publisher(
-                        geometry_msgs.msg.PoseStamped, self.get_topic(name), 1)
-                if self.should_publish_tf(name):
-                    self._tf_frames[uids[name]] = self.get_frames(name)
+                config = self.get_rigid_body_config(name)
+                self.init_rigid_body(uids[name], config)
 
         if self.should_publish_description:
             qos = rclpy.qos.QoSProfile(  # type: ignore
@@ -236,75 +344,62 @@ class NatNetROSNode(rclpy.node.Node):
                                                   "data", 10)
         self.client.data_callback = self.data_callback
 
-    def get_tf_frames(self, uid: int) -> Optional[Tuple[str, str]]:
-        if self._default_enabled and uid not in self._tf_frames:
-            name = self.client.rigid_body_names.get(uid, "")
-            if name:
-                self._tf_frames[uid] = self.get_frames(name)
-            else:
-                self._tf_frames[uid] = None
-        return self._tf_frames.get(uid, None)
-
-    def get_publisher(self, uid: int) -> Optional[rclpy.publisher.Publisher]:
-        if self._default_enabled and uid not in self._rigid_bodies_pub:
-            name = self.client.rigid_body_names.get(uid, "")
-            topic = self.get_topic(name) if name else ""
-            if topic:
-                self._rigid_bodies_pub[uid] = self.create_publisher(
-                    geometry_msgs.msg.PoseStamped, topic, 1)
-            else:
-                self._rigid_bodies_pub[uid] = None
-        return self._rigid_bodies_pub.get(uid, None)
-
-    def pose_msg(self, rb: RigidBody) -> geometry_msgs.msg.Pose:
+    def pose_msg(self, rb: RigidBody,
+                 data: RigidBodyData) -> geometry_msgs.msg.Pose:
         msg = geometry_msgs.msg.Pose()
-        msg.position.x = rb.position[0]
-        msg.position.y = -rb.position[2]
-        q = (rb.orientation[0], -rb.orientation[2], rb.orientation[1],
-             rb.orientation[3])
-        name = self.client.rigid_body_names.get(rb.id_num, "")
-        if self.should_project_to_2d(name):
+        msg.position.x = data.position[0]
+        msg.position.y = -data.position[2]
+        q = (data.orientation[0], -data.orientation[2], data.orientation[1],
+             data.orientation[3])
+        if rb.config.project_to_2d:
             msg.position.z = 0
             y, p, r = PyKDL.Rotation.Quaternion(*q).GetEulerZYX()
             q = PyKDL.Rotation.EulerZYX(y, 0, 0).GetQuaternion()
         else:
-            msg.position.z = rb.position[1]
+            msg.position.z = data.position[1]
         msg.orientation.x = q[0]
         msg.orientation.y = q[1]
         msg.orientation.z = q[2]
         msg.orientation.w = q[3]
         return msg
 
-    def data_callback(self, data: MoCapData) -> None:
+    def data_callback(self, stamp_ns: int, data: MoCapData) -> None:
         self.last_data_stamp = self.stamp(data.suffix_data)
         stamp = self.last_data_stamp.to_msg()
         self.last_data = data
-        for rb in data.rigid_bodies:
-            if not rb.tracking_valid:
+        transforms: list[tuple[geometry_msgs.msg.PoseStamped, str, str]] = []
+        for rb_data in data.rigid_bodies:
+            if not rb_data.tracking_valid:
                 continue
-            pub = self.get_publisher(rb.id_num)
-            frames = self.get_tf_frames(rb.id_num)
-            # self.get_logger().info(f"rb {rb} {pub} {frames}" )
-            if pub or frames is not None:
-                msg = geometry_msgs.msg.PoseStamped()
-                msg.header.frame_id = self.frame_id
-                msg.header.stamp = stamp
-                msg.pose = self.pose_msg(rb)
+            rb = self.get_rigid_body(rb_data.id)
+            if not rb or not rb.enabled:
+                continue
+            rb.last_pose_msg = geometry_msgs.msg.PoseStamped()
+            rb.last_pose_msg.header.frame_id = self.frame_id
+            rb.last_pose_msg.header.stamp = stamp
+            rb.last_pose_msg.pose = self.pose_msg(rb, rb_data)
+            frames = rb.tf_frames
+            pub = rb.publisher
             if pub:
-                pub.publish(msg)
+                pub.publish(rb.last_pose_msg)
             if frames is not None:
-                self.tf.broadcast(msg, *frames)
+                transforms.append((rb.last_pose_msg, *frames))
         if self.data_freq:
             self.data_freq.tick()
         if self.should_publish_data:
             data_msg = msg_from_data(data)
-            data_msg.header.frame_id = self.frame_id
+            data_msg.header.frame_id = self.optitrack_frame_id
             data_msg.header.stamp = stamp
             self.data_pub.publish(data_msg)
+        if transforms:
+            self.tf.broadcast_multiple(transforms)
 
     async def connect(self) -> bool:
-        return await self.client.connect_async(self.timeout,
-                                               start_listening_for_data=False)
+        return await self.client.connect(
+            discovery_address=self.broadcast_address,
+            server_address=self.server_address,
+            timeout=self.timeout,
+            start_listening_for_data=False)
 
 
 async def spinning(node: NatNetROSNode) -> None:
@@ -320,7 +415,7 @@ async def run(node: NatNetROSNode) -> None:
     if connected:
         await asyncio.sleep(1)
         await node.init_ros()
-        await node.client.start_listening_for_data_async()
+        await node.client.start_listening_for_data()
         await asyncio.wait([
             spin,
             asyncio.create_task(node.client.wait_until_lost_connection())
@@ -335,6 +430,6 @@ def main(args: Any = None) -> None:
         loop.run_until_complete(run(node))
     except KeyboardInterrupt:
         pass
-    loop.run_until_complete(node.client.unconnect_async())
+    loop.run_until_complete(node.client.unconnect())
     rclpy.try_shutdown()  # type: ignore
     node.destroy_node()  # type: ignore
