@@ -1,13 +1,17 @@
 from __future__ import annotations
 
 from collections.abc import Iterable
+from typing import TYPE_CHECKING
 
 import PyKDL
 import rclpy.duration
 import rclpy.node
-import tf2_ros
-from geometry_msgs.msg import (Point, Pose, PoseStamped, TransformStamped,
-                               Vector3)
+import tf2_ros  # type: ignore[import-untyped]
+from geometry_msgs.msg import TransformStamped  # type: ignore[import-untyped]
+from geometry_msgs.msg import Vector3
+
+if TYPE_CHECKING:
+    from geometry_msgs.msg import Point, Pose, PoseStamped
 
 
 def vector_msg(point: Point) -> Vector3:

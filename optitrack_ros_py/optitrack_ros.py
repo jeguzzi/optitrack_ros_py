@@ -4,31 +4,33 @@ import asyncio
 import dataclasses as dc
 import math
 import re
-from typing import Any, TypeVar, cast
+from typing import TYPE_CHECKING, Any, TypeVar, cast
 
 try:
-    import diagnostic_msgs
-    import diagnostic_updater
+    import diagnostic_msgs  # type: ignore[import-untyped]
+    import diagnostic_updater  # type: ignore[import-untyped]
     DIAGNOSTICS = True
 except ModuleNotFoundError:
     DIAGNOSTICS = False
 
-import geometry_msgs
+import geometry_msgs  # type: ignore[import-untyped]
 import netifaces
-import optitrack_msgs.msg
-import PyKDL
+import optitrack_msgs.msg  # type: ignore[import-untyped]
+import PyKDL  # type: ignore[import-not-found]
 import rclpy
 import rclpy.node
 import rclpy.publisher
 import rclpy.time
 from natnet_py import AsyncClient
-from natnet_py.protocol import FrameSuffixData, MoCapData, RigidBodyData
 from rclpy.validate_topic_name import (InvalidTopicNameException,
                                        validate_topic_name)
 
 from optitrack_ros_py.tf import TF
 
 from .interfaces import msg_from_data, msg_from_description
+
+if TYPE_CHECKING:
+    from natnet_py.protocol import FrameSuffixData, MoCapData, RigidBodyData
 
 T = TypeVar("T")
 
@@ -237,7 +239,7 @@ class NatNetROSNode(rclpy.node.Node):
         #                  f"{name} ({data.position}, {data.orientation})")
         if self._rigid_bodies:
             stat.summary(diagnostic_msgs.msg.DiagnosticStatus.OK, "Connected")
-            for uid, rb in self._rigid_bodies.items():
+            for _uid, rb in self._rigid_bodies.items():
                 if not rb.last_pose_msg:
                     msg = 'not yet seen'
                 else:

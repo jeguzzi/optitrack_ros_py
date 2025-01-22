@@ -1,8 +1,12 @@
 from __future__ import annotations
 
-import geometry_msgs.msg
-import optitrack_msgs.msg
-from natnet_py import protocol
+from typing import TYPE_CHECKING
+
+import geometry_msgs.msg  # type: ignore[import-untyped]
+import optitrack_msgs.msg  # type: ignore[import-untyped]
+
+if TYPE_CHECKING:
+    from natnet_py import protocol
 
 
 def msg_from_vector(value: protocol.Vector3) -> geometry_msgs.msg.Vector3:
