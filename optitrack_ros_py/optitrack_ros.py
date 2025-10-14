@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import array
 import asyncio
 import dataclasses as dc
 import math
@@ -214,6 +215,16 @@ class NatNetROSNode(rclpy.node.Node):
             "publish_data", False)
         self.should_publish_description = self.try_to_declare_parameter(
             "publish_description", False)
+        self.should_publish_covariance = self.try_to_declare_parameter(
+            "publish_covariance", False)
+        position_error = self.try_to_declare_parameter("position_error", 1e-4)
+        orientation_error = self.try_to_declare_parameter(
+            "orientation_error", 1e-3)
+        self.covariance = array.array('f', [0] * 36)
+        self.covariance[0] = self.covariance[7] = self.covariance[
+            14] = position_error**2
+        self.covariance[21] = self.covariance[28] = self.covariance[
+            35] = orientation_error**2
 
     def now_ns(self) -> int:
         return self.get_clock().now().nanoseconds
@@ -288,8 +299,13 @@ class NatNetROSNode(rclpy.node.Node):
         if config.enabled:
             try:
                 validate_topic_name(config.topic)
-                rb.publisher = self.create_publisher(
-                    geometry_msgs.msg.PoseStamped, config.topic, 1)
+                if self.should_publish_covariance:
+                    rb.publisher = self.create_publisher(
+                        geometry_msgs.msg.PoseWithCovarianceStamped,
+                        config.topic, 1)
+                else:
+                    rb.publisher = self.create_publisher(
+                        geometry_msgs.msg.PoseStamped, config.topic, 1)
             except InvalidTopicNameException:
                 self.get_logger().warning(f"Topic {config.topic} not valid")
 
@@ -383,7 +399,15 @@ class NatNetROSNode(rclpy.node.Node):
             frames = rb.tf_frames
             pub = rb.publisher
             if pub:
-                pub.publish(rb.last_pose_msg)
+                if self.should_publish_covariance:
+                    pose_with_cov_msg = geometry_msgs.msg.PoseWithCovarianceStamped(
+                    )
+                    pose_with_cov_msg.header = rb.last_pose_msg.header
+                    pose_with_cov_msg.pose.pose = rb.last_pose_msg.pose
+                    pose_with_cov_msg.pose.covariance = self.covariance
+                    pub.publish(pose_with_cov_msg)
+                else:
+                    pub.publish(rb.last_pose_msg)
             if frames is not None:
                 transforms.append((rb.last_pose_msg, *frames))
         if self.data_freq:
