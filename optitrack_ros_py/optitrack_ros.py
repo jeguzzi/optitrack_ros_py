@@ -129,13 +129,13 @@ class NatNetROSNode(rclpy.node.Node):
                     self.get_logger().error(f"Interface {iface} not connected")
                 else:
                     net = addrs[netifaces.AF_INET][0]
-                    print(net)
+                    self.get_logger().info(f"net {net}")
                     client_address = net["addr"]
                     if "broadcast" in net:
                         broadcast_address = net["broadcast"]
                     else:
-                        server_address = client_address
-                        broadcast_address = ""
+                        # server_address = client_address
+                        broadcast_address = client_address
             else:
                 self.get_logger().error(f"Unknown interface {iface}")
 
