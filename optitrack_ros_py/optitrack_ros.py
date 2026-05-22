@@ -150,7 +150,7 @@ class NatNetROSNode(rclpy.node.Node):
         self.restamp = self.try_to_declare_parameter("restamp", False)
         self.optitrack_frame_id = "optitrack"
         self.frame_id = self.try_to_declare_parameter("frame_id", "world")
-        self.timeout = self.try_to_declare_parameter("timeout", 5.0)
+        self.timeout = float(self.try_to_declare_parameter("timeout", 5.0))
         self._tf: TF | None = None
         pose = geometry_msgs.msg.Pose()
         pose.orientation.x = math.sqrt(2)
@@ -217,9 +217,9 @@ class NatNetROSNode(rclpy.node.Node):
             "publish_description", False)
         self.should_publish_covariance = self.try_to_declare_parameter(
             "publish_covariance", False)
-        position_error = self.try_to_declare_parameter("position_error", 1e-4)
-        orientation_error = self.try_to_declare_parameter(
-            "orientation_error", 1e-3)
+        position_error = float(self.try_to_declare_parameter("position_error", 1e-4))
+        orientation_error = float(self.try_to_declare_parameter(
+            "orientation_error", 1e-3))
         self.covariance = array.array('f', [0] * 36)
         self.covariance[0] = self.covariance[7] = self.covariance[
             14] = position_error**2
@@ -451,7 +451,10 @@ async def run(node: NatNetROSNode) -> None:
 def main(args: Any = None) -> None:
     rclpy.init(args=args)
     node = NatNetROSNode()
-    loop = asyncio.get_event_loop()
+    try:
+        loop = asyncio.get_event_loop()
+    except RuntimeError:
+        loop = asyncio.new_event_loop()
     try:
         loop.run_until_complete(run(node))
     except KeyboardInterrupt:
