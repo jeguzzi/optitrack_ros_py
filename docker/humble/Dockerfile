@@ -10,15 +10,19 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     ros-humble-diagnostic-msgs \
     && rm -rf /var/lib/apt/lists/*
 
-RUN python3 -m pip install netifaces
+RUN python3 -m pip install netifaces git+https://github.com/jeguzzi/natnet_py.git
 
 RUN locale-gen en_US.UTF-8
 
 SHELL ["/bin/bash", "-c"]
 
-COPY optitrack_ros_py /ros_ws/src/optitrack_ros_py
-COPY optitrack_msgs /ros_ws/src/optitrack_msgs
-COPY natnet_py /ros_ws/src/natnet_py
+RUN mkdir -p /ros_ws/src \
+    && cd /ros_ws \
+    && git clone https://github.com/jeguzzi/optitrack_ros_py.git src/optitrack_ros_py \
+    && git clone https://github.com/jeguzzi/optitrack_msgs.git src/optitrack_msgs \
+    && source /ros_entrypoint.sh \
+    && colcon build --install-base /opt/ros/ws --merge-install \
+    && rm -r /ros_ws
 
 RUN cd /ros_ws \
     && source /ros_entrypoint.sh \

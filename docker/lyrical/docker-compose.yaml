@@ -2,6 +2,6 @@ services:
   optitrack:
     image: jeguzzi/optitrack_ros_py:lyrical
     build:
-      context: ../../..
-      dockerfile: optitrack_ros_py/docker/lyrical/Dockerfile
+      context: .
+      dockerfile: Dockerfile
     command: ros2 launch optitrack_ros_py single.launch name:=test
