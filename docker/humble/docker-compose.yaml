@@ -1,0 +1,8 @@
+version: '3'
+services:
+  optitrack:
+    image: jeguzzi/optitrack_ros_py:humble
+    build:
+      context: ../../..
+      dockerfile: optitrack_ros_py/docker/humble/Dockerfile
+    command: ros2 launch optitrack_ros_py single.launch name:=test

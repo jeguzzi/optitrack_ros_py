@@ -1,0 +1,7 @@
+services:
+  optitrack:
+    image: jeguzzi/optitrack_ros_py:jazzy
+    build:
+      context: ../../..
+      dockerfile: optitrack_ros_py/docker/jazzy/Dockerfile
+    command: ros2 launch optitrack_ros_py single.launch name:=test
