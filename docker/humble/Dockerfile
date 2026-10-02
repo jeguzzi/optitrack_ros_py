@@ -24,11 +24,6 @@ RUN mkdir -p /ros_ws/src \
     && colcon build --install-base /opt/ros/ws --merge-install \
     && rm -r /ros_ws
 
-RUN cd /ros_ws \
-    && source /ros_entrypoint.sh \
-    && colcon build --install-base /opt/ros/ws --merge-install \
-    && rm -r /ros_ws
-
 RUN /bin/sed -i \
   '/source "\/opt\/ros\/$ROS_DISTRO\/setup.bash"/a source "\/opt\/ros\/ws\/setup.bash"' \
   /ros_entrypoint.sh
