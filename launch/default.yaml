@@ -1,0 +1,10 @@
+/**:
+  ros__parameters:
+    rigid_bodies:
+      default:
+        topic: NAME
+        enabled: true
+        project_to_2d: false
+        child_frame_id: NAME
+        root_frame_id: NAME
+        tf: false
