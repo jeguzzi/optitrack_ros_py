@@ -14,6 +14,8 @@ try:
 except ModuleNotFoundError:
     DIAGNOSTICS = False
 
+import builtin_interfaces
+import rosgraph_msgs
 import geometry_msgs  # type: ignore[import-untyped]
 import netifaces
 import optitrack_msgs.msg  # type: ignore[import-untyped]
@@ -217,9 +219,12 @@ class NatNetROSNode(rclpy.node.Node):
             "publish_description", False)
         self.should_publish_covariance = self.try_to_declare_parameter(
             "publish_covariance", False)
-        position_error = float(self.try_to_declare_parameter("position_error", 1e-4))
-        orientation_error = float(self.try_to_declare_parameter(
-            "orientation_error", 1e-3))
+        self.should_publish_clock = self.try_to_declare_parameter(
+            "publish_clock", False)
+        position_error = float(
+            self.try_to_declare_parameter("position_error", 1e-4))
+        orientation_error = float(
+            self.try_to_declare_parameter("orientation_error", 1e-3))
         self.covariance = array.array('f', [0] * 36)
         self.covariance[0] = self.covariance[7] = self.covariance[
             14] = position_error**2
@@ -345,12 +350,11 @@ class NatNetROSNode(rclpy.node.Node):
                 config = self.get_rigid_body_config(name)
                 self.init_rigid_body(uids[name], config)
 
+        qos = rclpy.qos.QoSProfile(  # type: ignore
+            depth=1,
+            history=rclpy.qos.QoSHistoryPolicy.KEEP_LAST,
+            durability=rclpy.qos.QoSDurabilityPolicy.TRANSIENT_LOCAL)
         if self.should_publish_description:
-            qos = rclpy.qos.QoSProfile(  # type: ignore
-                depth=1,
-                history=rclpy.qos.QoSHistoryPolicy.KEEP_LAST,
-                durability=rclpy.qos.QoSDurabilityPolicy.TRANSIENT_LOCAL,
-            )
             self.description_pub = self.create_publisher(
                 optitrack_msgs.msg.Description, "description", qos)
 
@@ -361,6 +365,18 @@ class NatNetROSNode(rclpy.node.Node):
             self.data_pub = self.create_publisher(optitrack_msgs.msg.Data,
                                                   "data", 10)
         self.client.data_callback = self.data_callback
+
+        if self.should_publish_clock:
+            self.clock_pub = self.create_publisher(rosgraph_msgs.msg.Clock, "clock", 1)
+
+        if self.sync and self.client.clock:
+            sync_pub = self.create_publisher(builtin_interfaces.msg.Time,
+                                             "clock_diff", qos)
+            delta = self.client.clock._t2_c - self.client.clock._t2_s
+            msg = builtin_interfaces.msg.Time()
+            msg.sec = delta // 1_000_000_000
+            msg.nanosec = delta - msg.sec * 1_000_000_000
+            sync_pub.publish(msg)
 
     def pose_msg(self, rb: RigidBody,
                  data: RigidBodyData) -> geometry_msgs.msg.Pose:
@@ -383,6 +399,12 @@ class NatNetROSNode(rclpy.node.Node):
 
     def data_callback(self, stamp_ns: int, data: MoCapData) -> None:
         self.last_data_stamp = self.stamp(data.suffix_data)
+
+        server_stamp = rclpy.time.Time(nanoseconds=data.suffix_data.stamp_camera_mid_exposure).to_msg()
+        if self.should_publish_clock:
+            cmsg = rosgraph_msgs.msg.Clock()
+            cmsg.clock = server_stamp
+            self.clock_pub.publish(cmsg)
         stamp = self.last_data_stamp.to_msg()
         self.last_data = data
         transforms: list[tuple[geometry_msgs.msg.PoseStamped, str, str]] = []
