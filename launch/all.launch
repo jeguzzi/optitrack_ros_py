@@ -13,6 +13,7 @@
   <arg name="publish_description" default="false"/>
   <arg name="topic" default="/optitrack/NAME"/>
   <arg name="project_to_2d" default="false"/>
+  <arg name="publish_clock" default="false"/>
 
   <node pkg="optitrack_ros_py" exec="optitrack_ros" name="optitrack_ros" output="screen">
     <param name="iface" value="$(var iface)"/>
@@ -22,6 +23,7 @@
     <param name="diagnostics" value="$(var diagnostics)"/>
     <param name="publish_data" value="$(var publish_data)"/>
     <param name="publish_description" value="$(var publish_description)"/>
+    <param name="publish_clock" value="$(var publish_clock)"/>
     <param name="rigid_bodies">
       <param name="default">
         <param name="enabled" value="true"/>

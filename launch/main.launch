@@ -1,20 +1,19 @@
 <launch>
-
-  <arg name="iface"/>
+  <arg name="iface" default=""/>
   <arg name="timeout" default="5.0"/>
   <arg name="frame_id" default="world"/>
   <arg name="publish_tf" default="true"/>
-  <arg name="child_frame_id" default="base_link"/>
-  <arg name="root_frame_id" default="odom"/>
   <arg name="sync" default="true"/>
   <arg name="restamp" default="false"/>
   <arg name="diagnostics" default="false"/>
+  <arg name="publish_covariance" default="false"/>
+  <arg name="position_error" default="1e-3"/>
+  <arg name="orientation_error" default="1e-2"/>
   <arg name="publish_data" default="false"/>
   <arg name="publish_description" default="false"/>
   <arg name="publish_clock" default="false"/>
-  <arg name="topic" default="/optitrack/*"/>
-  <arg name="name"/>
-
+  <arg name="config" default="$(find-pkg-share optitrack_ros_py)/launch/default.yaml"/>
+  <arg name="name" default="optitrack"/>
   <node namespace="$(var name)" pkg="optitrack_ros_py" exec="optitrack_ros" name="optitrack_ros" output="screen">
     <param name="iface" value="$(var iface)"/>
     <param name="timeout" value="$(var timeout)"/>
@@ -23,15 +22,10 @@
     <param name="diagnostics" value="$(var diagnostics)"/>
     <param name="publish_data" value="$(var publish_data)"/>
     <param name="publish_description" value="$(var publish_description)"/>
+    <param name="publish_covariance" value="$(var publish_covariance)"/>
     <param name="publish_clock" value="$(var publish_clock)"/>
-    <param name="rigid_bodies">
-      <param name="default.enabled" value="false"/>
-      <param name="$(var name).enabled" value="true"/>
-      <param name="$(var name).topic" value="$(var topic)"/>
-      <param name="$(var name).frame_id" value="$(var name)/$(var child_frame_id)"/>
-      <param name="$(var name).root_frame_id" value="$(var name)/$(var root_frame_id)"/>
-      <param name="$(var name).tf" value="$(var publish_tf)"/>
-    </param>
+    <param name="position_error" value="$(var position_error)"/>
+    <param name="orientation_error" value="$(var orientation_error)"/>
+    <param from="$(var config)"/>
   </node>
-
 </launch>
